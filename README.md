@@ -11,6 +11,7 @@ A Python tool for extracting text from videos using OCR (Optical Character Recog
 - Support for multiple video formats (mp4, avi, mov, mkv, wmv, flv, webm)
 - Configurable frame extraction interval
 - Debug mode for detailed processing information
+- Multithreaded processing for faster execution
 
 ## Requirements
 
@@ -55,6 +56,7 @@ Options:
   -fg, --frame_gap   Time gap between frames in seconds (default: 5)
   --debug           Enable debug mode to show detailed messages and keep frames
   --ocr {paddle,easyocr}  Choose OCR engine (default: paddle)
+  --threads N       Number of concurrent threads (default: 5)
 ```
 
 ### Examples
@@ -79,6 +81,11 @@ python main.py -fg 3
 python main.py --debug
 ```
 
+5. Use 10 concurrent threads:
+```bash
+python main.py --threads 10
+```
+
 ## Output
 
 For each processed video, the tool creates an `ocr_output` directory next to the video file containing:
@@ -91,6 +98,9 @@ For each processed video, the tool creates an `ocr_output` directory next to the
 - Text is only saved if the OCR confidence is above 80%
 - In debug mode, the frames directory is preserved for inspection
 - The tool supports both English and Simplified Chinese text recognition
+- Multithreading can significantly speed up processing when dealing with multiple videos
+- Each thread processes one video at a time
+- The number of threads should be adjusted based on your system's capabilities and the number of videos to process
 
 ## License
 
