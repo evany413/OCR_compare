@@ -31,8 +31,8 @@ def extract_frames(video_path: Union[str, Path], output_dir: Union[str, Path], f
         logger.error(f"Video file '{video_path}' does not exist")
         sys.exit(1)
         
-    # Create frames directory if it doesn't exist
-    frames_dir = output_dir / 'frames'
+    # Create frames directory with video name to avoid conflicts
+    frames_dir = output_dir / f"frames_{video_path.stem}"
     if frames_dir.exists():
         shutil.rmtree(frames_dir)
     frames_dir.mkdir(exist_ok=True)
@@ -60,6 +60,8 @@ def extract_frames(video_path: Union[str, Path], output_dir: Union[str, Path], f
         
     except Exception as e:
         logger.error(f"Error during frame extraction: {str(e)}")
+        if frames_dir.exists():
+            shutil.rmtree(frames_dir)
         sys.exit(1)
 
 def get_frame_files(frames_dir: Union[str, Path]) -> List[Path]:
@@ -92,7 +94,7 @@ def process_frames_paddle(ocr: PaddleOCR, frames_dir: Union[str, Path], output_f
                 logger.info(f"Processing frame {frame_path.stem}")
             
             result = ocr.ocr(str(frame_path))
-            if result is not None:
+            if result is not None and len(result) > 0 and result[0] is not None:
                 for line in result[0]:
                     if line is not None and len(line) >= 2:
                         text = line[1][0]
@@ -103,6 +105,8 @@ def process_frames_paddle(ocr: PaddleOCR, frames_dir: Union[str, Path], output_f
                         
                         if confidence > 0.8:
                             unique_words.add(text)
+            elif debug:
+                logger.info(f"No text detected in frame {frame_path.stem}")
         
         with open(output_file, 'w', encoding='utf-8') as f:
             for word in sorted(unique_words):
