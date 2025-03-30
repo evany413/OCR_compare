@@ -33,29 +33,34 @@ def extract_frames(video_path, frame_gap=5):
         probe = ffmpeg.probe(video_path)
         duration = float(probe['format']['duration'])
         
+        # Calculate total number of frames
+        total_frames = int(duration / frame_gap)
+        
+        # Calculate number of digits needed for leading zeros
+        num_digits = len(str(total_frames))
+        
         if debug:
             print(f"Video duration: {duration:.2f} seconds")
+            print(f"Total frames to extract: {total_frames}")
+            print(f"Using {num_digits} digits for frame numbering")
             print(f"Extracting frames from video: {video_path}")
         
-        # Extract frames based on frame_gap
-        stream = (
-            ffmpeg
-            .input(video_path)
-            .filter('fps', fps=1/frame_gap)  # 1 frame per frame_gap seconds
-            .output(
-                str(frames_dir / '%d.jpg'),
-                q=2,  # High quality (2 is high quality, lower number = higher quality)
-                frame_pts=1  # Add frame number to filename
-            )
-            .overwrite_output()
-            .run(capture_stdout=True, capture_stderr=True)
-        )
+        # Extract frames using ffmpeg-python API
+        stream = ffmpeg.input(video_path)
+        stream = ffmpeg.filter(stream, 'fps', fps=f'1/{frame_gap}')
+        stream = ffmpeg.filter(stream, 'scale', w='iw*sar', h='ih')
+        stream = ffmpeg.output(stream, str(frames_dir / f'%{num_digits}d.jpg'))
         
+        if debug:
+            print(f"Running ffmpeg command: {ffmpeg.compile(stream)}")
+            
+        ffmpeg.run(stream, capture_stdout=True, capture_stderr=True)
+            
         if debug:
             print("Frame extraction complete!")
         
     except ffmpeg.Error as e:
-        print(f"Error during frame extraction: {e.stderr.decode()}")
+        print(f"Error during frame extraction: {e.stderr.decode() if e.stderr else str(e)}")
         sys.exit(1)
     except Exception as e:
         print(f"An error occurred during frame extraction: {str(e)}")
