@@ -1,9 +1,7 @@
-import os
 from pathlib import Path
 import argparse
 import process
-from typing import Optional, Union, List, Set, Dict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Set
 import shutil
 import re
 from dataclasses import dataclass
@@ -30,132 +28,107 @@ INPUT_DIR = '_original'
 OUTPUT_DIR = '_converted'
 
 def extract_words_from_file(file_path: Path) -> Set[str]:
-    """Read file and extract words, returning them as a set"""
+    """Read file and extract words, returning them as a set of original words"""
     if not file_path.exists():
-        return set()
+        raise FileNotFoundError(f"File does not exist: {file_path}")
     
     with open(file_path, 'r', encoding='utf-8') as f:
-        text = f.read()
-        return set(re.findall(r'\w+', text.lower()))
+        return set(re.findall(r'\w+', f.read()))
 
-def is_video_file(file_path: Path) -> bool:
-    """Check if the file is a video file based on extension"""
-    video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm'}
-    return file_path.suffix.lower() in video_extensions
-
-def organize_folders(folder_path: Path, output_dir: Path, word_list: List[str], debug: bool = False) -> None:
+def organize_folders(folder_path: Path, output_dir: Path, ocr_output_file: Path, config: ProcessingConfig) -> None:
     """Organize folders based on OCR results and word list priority"""
-    if not folder_path.is_dir() or not folder_path.exists():
-        print(f"Folder path is not a directory or doesn't exist: {folder_path}")
-        return
         
-    txt_file = folder_path / 'ocr_output.txt'
-    if not txt_file.exists():
-        print(f"No text files found in OCR output directories under {folder_path}")
-        return
+    if not ocr_output_file.exists():
+        raise FileNotFoundError(f"Output file does not exist: {ocr_output_file}")
     
-    extracted_words = extract_words_from_file(txt_file)
+    extracted_words = extract_words_from_file(ocr_output_file)
     print(f"Extracted words: {extracted_words}")
     
+    lower_extracted_words = {word.lower() for word in extracted_words}
+    
+    # Find first matching word (case-insensitive)
     matching_word = next(
-        (word for word in word_list if word.lower() in extracted_words),
+        (word for word in config.word_list if word.lower() in lower_extracted_words),
         None
     )
+
+    # if not config.debug:
+    #     ocr_output_file.unlink()
     
     if matching_word:
         target_dir = output_dir / matching_word
         target_dir.mkdir(exist_ok=True)
-        path_return = shutil.move(str(folder_path), str(target_dir / folder_path.name))
-        txt_file = Path(path_return) / 'ocr_output.txt'
+        shutil.move(str(folder_path), str(target_dir / folder_path.name))
     else:
-        path_return = shutil.move(str(folder_path), str(output_dir / folder_path.name))
-        txt_file = Path(path_return) / 'ocr_output.txt'
+        shutil.move(str(folder_path), str(output_dir / folder_path.name))
     
-    if not debug:
-        txt_file.unlink()
 
-def process_videos(root_dir: Union[str, Path], config: ProcessingConfig) -> List[Path]:
-    """Process all video files in directory sequentially"""
-    root_path = Path(root_dir)
-    if not root_path.exists():
+def process_videos(root_dir: Path, video_files: List[Path], config: ProcessingConfig) -> List[Path]:
+
+    if not root_dir.exists():
         raise FileNotFoundError(f"Directory does not exist: {root_dir}")
 
-    video_files = list(root_path.rglob('*.mp4'))
-    if not video_files:
-        print("No video files found in the specified directory")
-        return []
-    
-    frames_folders_list = []
+    frames_folder_list = []
     for video_path in video_files:
         try:
             frames_folder = process.extract_frames(video_path, config.frame_gap)
-            frames_folders_list.append(frames_folder)
+            frames_folder_list.append(frames_folder)
         except Exception as e:
             print(f"Error processing {video_path}: {str(e)}")
 
-    return frames_folders_list
+    return frames_folder_list
 
-def process_images(root_dir: Union[str, Path], config: ProcessingConfig) -> None:
-    """Process all image files in directory sequentially"""
-    root_path = Path(root_dir)
-    if not root_path.exists():
+def process_images(root_dir: Path, image_files: List[Path], config: ProcessingConfig) -> Path:
+
+    if not root_dir.exists():
         raise FileNotFoundError(f"Directory does not exist: {root_dir}")
-        
-    image_files = list(root_dir.rglob('*.jpg'))
-    if not image_files:
-        print("No image files found in the specified directory")
-        return
     
     output_file = root_dir / 'ocr_output.txt'
+    if not output_file.exists():
+        output_file.touch()
     
     if config.ocr_engine == OCREngine.PADDLE:
-        ocr = process.PaddleOCR(lang='ch', use_angle_cls=True)
         for image_path in image_files:
             try:
-                process.process_frames_paddle(ocr, image_path, output_file)
+                process.process_frames_paddle(image_path, output_file)
             except Exception as e:
                 print(f"Error processing {image_path}: {str(e)}")
-    else:
+    elif config.ocr_engine == OCREngine.EASYOCR:
         for image_path in image_files:
             try:
                 process.process_frames_easyocr(image_path, output_file)
             except Exception as e:
                 print(f"Error processing {image_path}: {str(e)}")
+    return output_file
 
-def clean_up_ocr_output(frames_folders_list: List[Path]) -> None:
-    """Clean up temporary OCR output folders"""
+def clean_up_ocr_output(frames_folders_list: List[Path], config: ProcessingConfig) -> None:
+    if config.debug:
+        return
     for frames_folder in frames_folders_list:
         shutil.rmtree(frames_folder)
 
 def main():
     parser = argparse.ArgumentParser(description='Process videos and extract frames with OCR')
-    parser.add_argument('--input-dir', type=str, default=INPUT_DIR, help='Input directory containing videos')
-    parser.add_argument('--output-dir', type=str, default=OUTPUT_DIR, help='Output directory for processed files')
-    parser.add_argument('--frame-gap', type=float, default=5, help='Time gap between frames in seconds')
+    parser.add_argument('-i', '--input-dir', type=str, default=INPUT_DIR, help='Input directory containing videos')
+    parser.add_argument('-o', '--output-dir', type=str, default=OUTPUT_DIR, help='Output directory for processed files')
+    parser.add_argument('-fp', '--frame-gap', type=float, default=5, help='Time gap between frames in seconds')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     parser.add_argument('--ocr-engine', type=str, choices=['paddle', 'easyocr'], default='paddle', help='OCR engine to use')
-    parser.add_argument('--word-list', type=str, help='Path to file containing words to search for')
+    parser.add_argument('--word-list', type=str, nargs='+', help='Words to search for (space-separated)')
     
     args = parser.parse_args()
     
     # Convert paths to Path objects
     input_dir = Path(args.input_dir)
     output_dir = Path(args.output_dir)
-    
-    # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Get word list from file if provided
-    word_list = None
-    if args.word_list:
-        word_list = list(extract_words_from_file(Path(args.word_list)))
-    
+
     # Create processing config
     config = ProcessingConfig(
         frame_gap=args.frame_gap,
         debug=args.debug,
         ocr_engine=OCREngine(args.ocr_engine),
-        word_list=word_list
+        word_list=args.word_list
     )
     
     # process folders in input_dir
@@ -163,26 +136,15 @@ def main():
         if folder.is_dir():
             print(f"Processing folder: {folder}")
             # Get all video files
-            video_files = [f for f in folder.glob('**/*') if is_video_file(f)]
-        
-            if not video_files:
-                print(f"No video files found in {folder}")
-                continue
-            
+            video_files = [f for f in folder.rglob('*.mp4')]
             print(f"Found {len(video_files)} video files")
-            
-            # Process videos sequentially
-            frames_folders_list = process_videos(folder, config)
-            
-            # Process images sequentially
-            process_images(folder, config)
+            frames_folders_list = process_videos(folder, video_files, config)
 
-            # Clean up temporary files
-            if not config.debug:
-                clean_up_ocr_output(frames_folders_list)
+            image_files = [f for f in folder.rglob('*.jpg')]
+            output_file = process_images(folder, image_files, config)
             
-            # Organize folders based on OCR results
-            organize_folders(folder, output_dir, config.word_list, config.debug)
+            clean_up_ocr_output(frames_folders_list, config)
+            organize_folders(folder, output_dir, output_file, config)
     
     print("Processing completed!")
 
